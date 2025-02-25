@@ -7,10 +7,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from tools.pdf_reader import PDFReader
 
-# Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Load environment variables
 load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
 
@@ -23,7 +20,7 @@ else:
 class QuestionAnalysisAgents:
     def __init__(self):
         logging.info("Initializing Analysis Agents...")
-        self.llm = ChatOpenAI(api_key=openai_api_key, model="gpt-4")  # Using GPT-4
+        self.llm = ChatOpenAI(api_key=openai_api_key, model="gpt-4")
         logging.info("GPT-4 model initialized.")
 
     def qc_testing_agent(self):
