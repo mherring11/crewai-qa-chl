@@ -1,5 +1,7 @@
 import os
 import re
+import json
+import requests
 import pandas as pd
 from PyPDF2 import PdfReader
 from crewai import Agent, Task
@@ -16,8 +18,8 @@ print(f"OPENAI_API_KEY: {openai_api_key}")
 class QuestionAnalysisAgents:
     def __init__(self):
         print("Initializing Analysis Agents...")
-        self.llm = ChatOpenAI(api_key=openai_api_key, model="gpt-4") 
-        print("GPT-4 model initialized.")
+        self.llm = ChatOpenAI(api_key=openai_api_key, model="gpt-4o-mini") 
+        print("GPT-4o-mini model initialized.")
 
     def qc_testing_agent(self):
         return Agent(
@@ -90,6 +92,31 @@ def generate_question_variations(paraphrasing_agent, question):
     return [v.strip() for v in variations if v.strip()]
 
 
+def make_api_request(question):
+    """
+    Makes an API request to the chatbot endpoint with the given question.
+    Returns the response as a dictionary.
+    """
+    try:
+        url = os.getenv("CHL_API_URL")
+        headers = {
+            'Content-Type': 'application/json',
+            'Referer': os.getenv("CHL_API_REFERER"),
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        data = {
+            "question": question,
+            "test": True
+        }
+        
+        response = requests.post(url, headers=headers, json=data)
+        response.raise_for_status()  # Raise exception for HTTP errors
+        return response.json()
+    except Exception as e:
+        print(f"API request error for question '{question}': {e}")
+        return {"error": str(e), "answer": "Error fetching response"}
+
+
 def create_html_report(file_path, original_questions, variations, results):
     """
     Creates an enhanced HTML report with improved styling and readability.
@@ -139,6 +166,12 @@ def create_html_report(file_path, original_questions, variations, results):
                     border-radius: 5px;
                     margin-bottom: 10px;
                 }
+                .api-response {
+                    background: #fff3cd; /* Light yellow */
+                    padding: 15px;
+                    border-radius: 5px;
+                    margin-bottom: 10px;
+                }
                 .audit {
                     padding: 15px;
                     border-radius: 5px;
@@ -156,6 +189,9 @@ def create_html_report(file_path, original_questions, variations, results):
                 }
                 .variation-list li {
                     margin: 5px 0;
+                }
+                .api-container {
+                    margin-top: 10px;
                 }
             </style>
         </head>
@@ -180,6 +216,17 @@ def create_html_report(file_path, original_questions, variations, results):
 
             # Simulated Answer (Light Blue)
             f.write(f'<div class="simulated-answer"><h3>Simulated Answer:</h3><p>{result["answer"]}</p></div>')
+
+            # API Response Section (Light Yellow)
+            f.write(f'<div class="api-response"><h3>API Responses:</h3>')
+            for var_idx, api_response in enumerate(result.get("api_responses", []), 1):
+                variation = re.sub(r'^\d+\.\s*', '', variation_set[var_idx-1])
+                f.write(f'<div class="api-container">')
+                f.write(f"<p><strong>Variation {var_idx}:</strong> {variation}</p>")
+                f.write(f"<p><strong>Chat ID:</strong> {api_response.get('chat_id', 'N/A')}</p>")
+                f.write(f"<p><strong>Answer:</strong> {api_response.get('answer', 'No answer provided')}</p>")
+                f.write('</div>')
+            f.write("</div>")
 
             audit_class = "audit-high" if result["score"] >= 95 else "audit-low"
 
@@ -235,6 +282,19 @@ def analyze_questions(pdf_files):
                     )
                     qc_result = qc_agent.execute_task(qc_task)
                     print(f"Simulated Answer: {qc_result}")
+                    
+                    # Make API requests for each question variation
+                    print(f"\n--- Processing Question {idx} API Requests ---")
+                    # print api url and referer
+                    print(f"API URL: {os.getenv('CHL_API_URL')}")
+                    print(f"API Referer: {os.getenv('CHL_API_REFERER')}")
+                    api_responses = []
+                    for variation in question_variations:
+                        variation_clean = re.sub(r'^\d+\.\s*', '', variation).strip()
+                        print(f"Making API request for: {variation_clean}")
+                        api_response = make_api_request(variation_clean)
+                        api_responses.append(api_response)
+                        print(f"API Response: {json.dumps(api_response, indent=2)}")
 
                     # QC Auditor Agent
                     audit_task = Task(
@@ -264,7 +324,8 @@ def analyze_questions(pdf_files):
                         "question": question,
                         "answer": qc_result,
                         "score": score,
-                        "explanation": explanation
+                        "explanation": explanation,
+                        "api_responses": api_responses  # Add API responses to results
                     })
 
                 if results and question_variations_list:
