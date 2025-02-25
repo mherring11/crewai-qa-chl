@@ -1,22 +1,26 @@
 import os
 import re
+import json
+import requests
 import pandas as pd
 from PyPDF2 import PdfReader
 from crewai import Agent, Task
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
+# Load environment variables
 load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
 
 print("Environment variables loaded.")
 print(f"OPENAI_API_KEY: {openai_api_key}")
 
+CHATBOT_API_URL = "https://chl2023dev.wpenginepowered.com/wp-json/chl-smart-search-chatbot/v1/ask"
 
 class QuestionAnalysisAgents:
     def __init__(self):
         print("Initializing Analysis Agents...")
-        self.llm = ChatOpenAI(api_key=openai_api_key, model="gpt-4") 
+        self.llm = ChatOpenAI(api_key=openai_api_key, model="gpt-4")  
         print("GPT-4 model initialized.")
 
     def qc_testing_agent(self):
@@ -48,25 +52,18 @@ class QuestionAnalysisAgents:
 
 
 def extract_questions_and_answers_from_pdf(file_path):
-    """
-    Extracts questions and answers from a PDF file.
-    Assumes questions start with "Question:" and answers start with "Answer:".
-    """
+    """Extracts questions and answers from a PDF file."""
     try:
         reader = PdfReader(file_path)
         text = "\n".join(page.extract_text() for page in reader.pages if page.extract_text())
 
-  
         question_pattern = r"(?<=Question:).*?(?=\nAnswer:)"
         answer_pattern = r"(?<=Answer:).*?(?=\nQuestion:|$)"
 
         questions = re.findall(question_pattern, text, re.DOTALL)
         answers = re.findall(answer_pattern, text, re.DOTALL)
 
-        questions = [q.strip() for q in questions]
-        answers = [a.strip() for a in answers]
-
-        return questions, answers
+        return [q.strip() for q in questions], [a.strip() for a in answers]
     except Exception as e:
         print(f"Error reading PDF file: {file_path} | {e}")
         return [], []
@@ -76,9 +73,7 @@ def generate_question_variations(paraphrasing_agent, question):
     """Generates five variations of a given question using GPT-4."""
     
     variation_task = Task(
-        description=(
-            f"Generate 5 variations of the following question while keeping the meaning intact:\n\n{question}"
-        ),
+        description=f"Generate 5 variations of the following question while keeping the meaning intact:\n\n{question}",
         agent=paraphrasing_agent,
         expected_output="A list of 5 paraphrased variations of the given question."
     )
@@ -86,7 +81,6 @@ def generate_question_variations(paraphrasing_agent, question):
     variations_text = paraphrasing_agent.execute_task(variation_task)
 
     variations = variations_text.split("\n") if isinstance(variations_text, str) else []
-
     return [v.strip() for v in variations if v.strip()]
 
 
@@ -194,7 +188,7 @@ def create_html_report(file_path, original_questions, variations, results):
 
     print(f"Enhanced HTML report generated: {html_file}")
 
-def analyze_questions(pdf_files):
+def analyze_questions(pdf_files, questions):
     agents = QuestionAnalysisAgents()
     qc_agent = agents.qc_testing_agent()
     auditor_agent = agents.qc_auditor_agent()
@@ -204,20 +198,16 @@ def analyze_questions(pdf_files):
         if os.path.exists(file_path):
             print(f"\nProcessing file: {file_path}")
             try:
-                questions, answers = extract_questions_and_answers_from_pdf(file_path)
+                extracted_questions, extracted_answers = extract_questions_and_answers_from_pdf(file_path)
 
-                if not questions:
-                    print(f"No questions found in the PDF file: {file_path}")
+                if not extracted_questions:
+                    print(f"No questions found in {file_path}")
                     continue
 
-                results = []
-                question_variations_list = []
-
-                for idx, (question, answer) in enumerate(zip(questions, answers), 1):
+                for idx, (question, answer) in enumerate(zip(extracted_questions, extracted_answers), 1):
                     print(f"\n--- Processing Question {idx} ---")
                     print(f"Original Q{idx}: {question}")
 
-                    # Generate 5 variations of the question
                     question_variations = generate_question_variations(paraphrasing_agent, question)
                     print(f"Generated Variations: {question_variations}")
 
@@ -225,18 +215,13 @@ def analyze_questions(pdf_files):
                         print(f"Skipping question {idx} as no variations were generated.")
                         continue
 
-                    question_variations_list.append(question_variations)
-
-                    # QC Testing Agent
                     qc_task = Task(
                         description=f"Provide a simulated answer strictly based on the question: {question}",
                         agent=qc_agent,
                         expected_output="A simulated response strictly based on the question."
                     )
                     qc_result = qc_agent.execute_task(qc_task)
-                    print(f"Simulated Answer: {qc_result}")
 
-                    # QC Auditor Agent
                     audit_task = Task(
                         description=(
                             f"Evaluate the response based on the question: {question}\n"
@@ -247,35 +232,53 @@ def analyze_questions(pdf_files):
                         expected_output="A score between 0 and 100 with justification."
                     )
                     audit_result = auditor_agent.execute_task(audit_task)
-                    print(f"Audit Result: {audit_result}")
 
-                    # Extract score and justification
                     score_match = re.search(r'\b(\d{1,3})\b', audit_result)
-                    if score_match:
-                        score = int(score_match.group(1))
-                        print(f"Score Extracted: {score}")
-                    else:
-                        score = 50 
-                        print(f"No valid score found for Q{idx}. Defaulting to score: {score}")
+                    score = int(score_match.group(1)) if score_match else 50
 
-                    explanation = audit_result.strip() 
+                    explanation = audit_result.strip()
 
-                    results.append({
-                        "question": question,
-                        "answer": qc_result,
+                    questions.append({
+                        "initial_question": question,
+                        "initial_answer": qc_result,
+                        "additional_questions": question_variations,
                         "score": score,
                         "explanation": explanation
                     })
-
-                if results and question_variations_list:
-                    create_html_report(file_path, questions, question_variations_list, results)
-                else:
-                    print(f"Skipping report generation for {file_path} due to missing data.")
 
             except Exception as e:
                 print(f"Error processing {file_path}: {e}")
         else:
             print(f"File not found: {file_path}")
+
+    return questions
+
+
+def send_questions_to_chatbot(questions):
+    """Send each analyzed question to the chatbot API."""
+    for q in questions:
+        payload = {
+            "question": q["initial_question"],
+            "test": True
+        }
+
+        try:
+            response = requests.post(
+                CHATBOT_API_URL,
+                headers={
+                    "Content-Type": "application/json",
+                    "Referer": "https://chl2023dev.wpenginepowered.com"
+                },
+                data=json.dumps(payload)
+            )
+
+            if response.status_code == 200:
+                print(f"✅ Sent: {q['initial_question']}")
+            else:
+                print(f"❌ Failed to send: {q['initial_question']}. Status Code: {response.status_code}")
+
+        except Exception as e:
+            print(f"❌ Error sending question: {q['initial_question']} | Error: {e}")
 
 
 if __name__ == "__main__":
@@ -288,4 +291,9 @@ if __name__ == "__main__":
         "pdfs/Chl_chatbot_test_questions_seo.pdf",
     ]
 
-    analyze_questions(pdf_files)
+    questions = []  # Empty array to store questions
+
+    questions = analyze_questions(pdf_files, questions)  # Process and update questions array
+
+    send_questions_to_chatbot(questions)  # Send processed questions to the chatbot
+
