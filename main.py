@@ -243,7 +243,7 @@ def create_html_report(file_path, original_questions, variations, results):
 
 def analyze_questions(pdf_files):
     agents = QuestionAnalysisAgents()
-    qc_agent = agents.qc_testing_agent()
+    # qc_agent = agents.qc_testing_agent()
     auditor_agent = agents.qc_auditor_agent()
     paraphrasing_agent = agents.question_paraphrasing_agent()
 
@@ -275,13 +275,13 @@ def analyze_questions(pdf_files):
                     question_variations_list.append(question_variations)
 
                     # QC Testing Agent
-                    qc_task = Task(
-                        description=f"Provide a simulated answer strictly based on the question: {question}",
-                        agent=qc_agent,
-                        expected_output="A simulated response strictly based on the question."
-                    )
-                    qc_result = qc_agent.execute_task(qc_task)
-                    print(f"Simulated Answer: {qc_result}")
+                    # qc_task = Task(
+                    #     description=f"Provide a simulated answer strictly based on the question: {question}",
+                    #     agent=qc_agent,
+                    #     expected_output="A simulated response strictly based on the question."
+                    # )
+                    # qc_result = qc_agent.execute_task(qc_task)
+                    # print(f"Simulated Answer: {qc_result}")
                     
                     # Make API requests for each question variation
                     print(f"\n--- Processing Question {idx} API Requests ---")
@@ -296,18 +296,23 @@ def analyze_questions(pdf_files):
                         api_responses.append(api_response)
                         print(f"API Response: {json.dumps(api_response, indent=2)}")
 
-                    # QC Auditor Agent
-                    audit_task = Task(
-                        description=(
-                            f"Evaluate the response based on the question: {question}\n"
-                            f"Simulated Answer: {qc_result}\n"
-                            "Return a numerical score (0-100) with justification."
-                        ),
-                        agent=auditor_agent,
-                        expected_output="A score between 0 and 100 with justification."
-                    )
-                    audit_result = auditor_agent.execute_task(audit_task)
-                    print(f"Audit Result: {audit_result}")
+                    for var_idx, api_response in enumerate(result.get("api_responses", []), 1):
+                        audit_result = ""
+                        answer = api_response.get('answer', 'No answer provided')
+                        # QC Auditor Agent
+                        if answer != 'No answer provided':
+                            audit_task = Task(
+                                description=(
+                                    f"Evaluate the response based on the question: {question}\n"
+                                    f"Simulated Answer: {answer}\n"
+                                    "Return a numerical score (0-100) with justification."
+                                ),
+                                agent=auditor_agent,
+                                expected_output="A score between 0 and 100 with justification."
+                            )
+                            audit_result = auditor_agent.execute_task(audit_task)
+                        
+                        print(f"Audit Result: {audit_result}")
 
                     # Extract score and justification
                     score_match = re.search(r'\b(\d{1,3})\b', audit_result)
@@ -342,11 +347,11 @@ def analyze_questions(pdf_files):
 if __name__ == "__main__":
     pdf_files = [
         "pdfs/Chl_chatbot_test_questions_accessibility.pdf",
-        "pdfs/Chl_chatbot_test_questions_app_development.pdf",
-        "pdfs/Chl_chatbot_test_questions_maintenance_support.pdf",
-        "pdfs/Chl_chatbot_test_questions_marketing_site.pdf",
-        "pdfs/Chl_chatbot_test_questions_motion_graphics.pdf",
-        "pdfs/Chl_chatbot_test_questions_seo.pdf",
+        # "pdfs/Chl_chatbot_test_questions_app_development.pdf",
+        # "pdfs/Chl_chatbot_test_questions_maintenance_support.pdf",
+        # "pdfs/Chl_chatbot_test_questions_marketing_site.pdf",
+        # "pdfs/Chl_chatbot_test_questions_motion_graphics.pdf",
+        # "pdfs/Chl_chatbot_test_questions_seo.pdf",
     ]
 
     analyze_questions(pdf_files)
